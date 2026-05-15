@@ -10,6 +10,7 @@ import (
 	"time"
 
 	crawlstore "github.com/openclaw/crawlkit/store"
+	"github.com/openclaw/discrawl/internal/store/storedb"
 )
 
 const (
@@ -23,6 +24,7 @@ var ErrSchemaVersionMismatch = errors.New("database schema version mismatch")
 
 type Store struct {
 	db   *sql.DB
+	q    *storedb.Queries
 	path string
 }
 
@@ -119,7 +121,7 @@ func Open(ctx context.Context, path string) (*Store, error) {
 		return nil, err
 	}
 	db := base.DB()
-	store := &Store{db: db, path: path}
+	store := &Store{db: db, q: storedb.New(db), path: path}
 	if err := store.migrate(ctx); err != nil {
 		_ = base.Close()
 		return nil, err
@@ -132,7 +134,8 @@ func OpenReadOnly(ctx context.Context, path string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	store := &Store{db: base.DB(), path: path}
+	db := base.DB()
+	store := &Store{db: db, q: storedb.New(db), path: path}
 	if version, err := store.schemaVersion(ctx); err != nil {
 		_ = base.Close()
 		return nil, err

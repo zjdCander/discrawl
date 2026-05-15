@@ -56,6 +56,7 @@ func TestAttachmentMediaUpdatesAndFilters(t *testing.T) {
 		FetchStatus:   "fetched",
 	}))
 	require.NoError(t, s.UpdateAttachmentFetchStatus(ctx, "a2", "2026-05-15T12:06:00Z", "failed", "boom"))
+	require.NoError(t, seedAttachmentForGuild(ctx, s, "g1", "c1", "m1", "a1"))
 
 	rows, err := s.ListAttachments(ctx, AttachmentListOptions{MissingOnly: true})
 	require.NoError(t, err)

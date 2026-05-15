@@ -153,6 +153,20 @@ func TestStoreMaintenanceHelpers(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 	require.NoError(t, s.RebuildSearchIndexes(ctx))
+	messageVersion, err := s.GetSyncState(ctx, "schema:message_fts_rowid_version")
+	require.NoError(t, err)
+	require.Equal(t, messageFTSVersion, messageVersion)
+	memberVersion, err := s.GetSyncState(ctx, "schema:member_fts_rowid_version")
+	require.NoError(t, err)
+	require.Equal(t, memberFTSVersion, memberVersion)
+	require.NoError(t, s.RebuildMessageSearchIndex(ctx))
+	messageVersion, err = s.GetSyncState(ctx, "schema:message_fts_rowid_version")
+	require.NoError(t, err)
+	require.Equal(t, messageFTSVersion, messageVersion)
+	require.NoError(t, s.RebuildMemberSearchIndex(ctx))
+	memberVersion, err = s.GetSyncState(ctx, "schema:member_fts_rowid_version")
+	require.NoError(t, err)
+	require.Equal(t, memberFTSVersion, memberVersion)
 	version, err := s.schemaVersion(ctx)
 	require.NoError(t, err)
 	require.Equal(t, storeSchemaVersion, version)
@@ -1413,11 +1427,14 @@ func TestUpsertAndDeleteMember(t *testing.T) {
 		Username:    "peter",
 		DisplayName: "Peter",
 		RoleIDsJSON: `[]`,
-		RawJSON:     `{}`,
+		RawJSON:     `{"bio":"Builds tools","github":"steipete","url":"https://steipete.me"}`,
 	}))
 	rows, err := s.MemberByID(ctx, "u1")
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
+	require.Equal(t, "Builds tools", rows[0].Bio)
+	require.Equal(t, "steipete", rows[0].GitHubLogin)
+	require.Equal(t, "https://steipete.me", rows[0].Website)
 
 	require.NoError(t, s.DeleteMember(ctx, "g1", "u1"))
 	rows, err = s.MemberByID(ctx, "u1")
@@ -1429,12 +1446,13 @@ func TestUpsertAndDeleteMember(t *testing.T) {
 		UserID:      "u2",
 		Username:    "other",
 		RoleIDsJSON: `[]`,
-		RawJSON:     `{}`,
+		RawJSON:     `{"bio":"Other bio"}`,
 	}}))
 	rows, err = s.Members(ctx, "g1", "", 10)
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "u2", rows[0].UserID)
+	require.Equal(t, "Other bio", rows[0].Bio)
 }
 
 func TestOpenTightensDBFilePerms(t *testing.T) {

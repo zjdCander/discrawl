@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"time"
+
+	"github.com/openclaw/discrawl/internal/store/storedb"
 )
 
 type AttachmentListOptions struct {
@@ -241,29 +243,24 @@ func (s *Store) ExpandAttachmentChannelIDs(ctx context.Context, channelIDs []str
 }
 
 func (s *Store) UpdateAttachmentMedia(ctx context.Context, update AttachmentMediaUpdate) error {
-	_, err := s.db.ExecContext(ctx, `
-		update message_attachments
-		set media_path = ?,
-		    content_sha256 = ?,
-		    content_size = ?,
-		    fetched_at = ?,
-		    fetch_status = ?,
-		    fetch_error = ?,
-		    updated_at = ?
-		where attachment_id = ?
-	`, nullable(update.MediaPath), nullable(update.ContentSHA256), update.ContentSize, nullable(update.FetchedAt),
-		update.FetchStatus, update.FetchError, time.Now().UTC().Format(timeLayout), update.AttachmentID)
-	return err
+	return s.q.UpdateAttachmentMedia(ctx, storedb.UpdateAttachmentMediaParams{
+		MediaPath:     nullString(update.MediaPath),
+		ContentSha256: nullString(update.ContentSHA256),
+		ContentSize:   update.ContentSize,
+		FetchedAt:     nullString(update.FetchedAt),
+		FetchStatus:   update.FetchStatus,
+		FetchError:    update.FetchError,
+		UpdatedAt:     time.Now().UTC().Format(timeLayout),
+		AttachmentID:  update.AttachmentID,
+	})
 }
 
 func (s *Store) UpdateAttachmentFetchStatus(ctx context.Context, attachmentID, fetchedAt, status, message string) error {
-	_, err := s.db.ExecContext(ctx, `
-		update message_attachments
-		set fetched_at = ?,
-		    fetch_status = ?,
-		    fetch_error = ?,
-		    updated_at = ?
-		where attachment_id = ?
-	`, nullable(fetchedAt), status, message, time.Now().UTC().Format(timeLayout), attachmentID)
-	return err
+	return s.q.UpdateAttachmentFetchStatus(ctx, storedb.UpdateAttachmentFetchStatusParams{
+		FetchedAt:    nullString(fetchedAt),
+		FetchStatus:  status,
+		FetchError:   message,
+		UpdatedAt:    time.Now().UTC().Format(timeLayout),
+		AttachmentID: attachmentID,
+	})
 }

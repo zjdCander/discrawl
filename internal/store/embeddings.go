@@ -9,6 +9,7 @@ import (
 
 	"github.com/openclaw/crawlkit/embed"
 	"github.com/openclaw/crawlkit/vector"
+	"github.com/openclaw/discrawl/internal/store/storedb"
 )
 
 const (
@@ -163,62 +164,39 @@ func emptyEmbeddingIdentity(job embeddingJob) bool {
 }
 
 func (s *Store) pendingEmbeddingJobs(ctx context.Context, limit int, staleBefore string) ([]embeddingJob, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		select
-			j.message_id,
-			m.normalized_content,
-			j.attempts,
-			j.provider,
-			j.model,
-			j.input_version
-		from embedding_jobs j
-		join messages m on m.id = j.message_id
-		where j.state = 'pending'
-		  and (j.locked_at is null or j.locked_at = '' or j.locked_at < ?)
-		order by j.updated_at, j.message_id
-		limit ?
-	`, staleBefore, limit)
+	rows, err := s.q.ListPendingEmbeddingJobs(ctx, storedb.ListPendingEmbeddingJobsParams{
+		LockedAt: nullString(staleBefore),
+		Limit:    int64(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	var jobs []embeddingJob
-	for rows.Next() {
-		var job embeddingJob
-		if err := rows.Scan(&job.MessageID, &job.NormalizedContent, &job.Attempts, &job.Provider, &job.Model, &job.InputVersion); err != nil {
-			return nil, err
-		}
-		jobs = append(jobs, job)
+	jobs := make([]embeddingJob, 0, len(rows))
+	for _, row := range rows {
+		jobs = append(jobs, embeddingJob{
+			MessageID:         row.MessageID,
+			NormalizedContent: row.NormalizedContent,
+			Attempts:          int(row.Attempts),
+			Provider:          row.Provider,
+			Model:             row.Model,
+			InputVersion:      row.InputVersion,
+		})
 	}
-	return jobs, rows.Err()
+	return jobs, nil
 }
 
 func (s *Store) resetEmbeddingJobIdentity(ctx context.Context, messageID string, opts EmbeddingDrainOptions, resetAttempts bool) error {
-	if resetAttempts {
-		_, err := s.db.ExecContext(ctx, `
-			update embedding_jobs
-			set provider = ?,
-				model = ?,
-				input_version = ?,
-				attempts = 0,
-				last_error = '',
-				locked_at = null,
-				updated_at = ?
-			where message_id = ?
-		`, opts.Provider, opts.Model, opts.InputVersion, opts.Now().Format(timeLayout), messageID)
-		return err
+	arg := storedb.ResetEmbeddingJobIdentityParams{
+		Provider:     opts.Provider,
+		Model:        opts.Model,
+		InputVersion: opts.InputVersion,
+		UpdatedAt:    opts.Now().Format(timeLayout),
+		MessageID:    messageID,
 	}
-	_, err := s.db.ExecContext(ctx, `
-		update embedding_jobs
-		set provider = ?,
-			model = ?,
-			input_version = ?,
-			last_error = '',
-			locked_at = null,
-			updated_at = ?
-		where message_id = ?
-	`, opts.Provider, opts.Model, opts.InputVersion, opts.Now().Format(timeLayout), messageID)
-	return err
+	if resetAttempts {
+		return s.q.ResetEmbeddingJobIdentityAndAttempts(ctx, storedb.ResetEmbeddingJobIdentityAndAttemptsParams(arg))
+	}
+	return s.q.ResetEmbeddingJobIdentity(ctx, arg)
 }
 
 func (s *Store) processEmbeddingBatch(ctx context.Context, provider embed.Provider, opts EmbeddingDrainOptions, jobs []embeddingJob, stats *EmbeddingDrainStats) (bool, error) {
@@ -279,19 +257,15 @@ func (s *Store) lockEmbeddingJobs(ctx context.Context, jobs []embeddingJob, lock
 		return nil, err
 	}
 	defer rollback(tx)
+	qtx := s.q.WithTx(tx)
 	claimed := make([]embeddingJob, 0, len(jobs))
 	for _, job := range jobs {
-		result, err := tx.ExecContext(ctx, `
-			update embedding_jobs
-			set locked_at = ?, updated_at = ?
-			where message_id = ?
-			  and state = 'pending'
-			  and (locked_at is null or locked_at = '' or locked_at < ?)
-		`, lockedAt, lockedAt, job.MessageID, staleBefore)
-		if err != nil {
-			return nil, err
-		}
-		rows, err := result.RowsAffected()
+		rows, err := qtx.LockEmbeddingJob(ctx, storedb.LockEmbeddingJobParams{
+			LockedAt:    nullString(lockedAt),
+			UpdatedAt:   lockedAt,
+			MessageID:   job.MessageID,
+			StaleBefore: nullString(staleBefore),
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -331,35 +305,31 @@ func (s *Store) storeEmbeddingBatch(ctx context.Context, opts EmbeddingDrainOpti
 		return err
 	}
 	defer rollback(tx)
+	qtx := s.q.WithTx(tx)
 	embeddedAt := opts.Now().Format(timeLayout)
 	for i, job := range jobs {
 		blob, err := EncodeEmbeddingVector(vectors[i])
 		if err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			insert into message_embeddings(
-				message_id, provider, model, input_version, dimensions, embedding_blob, embedded_at
-			) values(?, ?, ?, ?, ?, ?, ?)
-			on conflict(message_id, provider, model, input_version) do update set
-				dimensions = excluded.dimensions,
-				embedding_blob = excluded.embedding_blob,
-				embedded_at = excluded.embedded_at
-		`, job.MessageID, opts.Provider, opts.Model, opts.InputVersion, dimensions, blob, embeddedAt); err != nil {
+		if err := qtx.UpsertMessageEmbedding(ctx, storedb.UpsertMessageEmbeddingParams{
+			MessageID:     job.MessageID,
+			Provider:      opts.Provider,
+			Model:         opts.Model,
+			InputVersion:  opts.InputVersion,
+			Dimensions:    int64(dimensions),
+			EmbeddingBlob: blob,
+			EmbeddedAt:    embeddedAt,
+		}); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			update embedding_jobs
-			set state = 'done',
-				attempts = 0,
-				provider = ?,
-				model = ?,
-				input_version = ?,
-				last_error = '',
-				locked_at = null,
-				updated_at = ?
-			where message_id = ?
-		`, opts.Provider, opts.Model, opts.InputVersion, embeddedAt, job.MessageID); err != nil {
+		if err := qtx.MarkEmbeddingJobDone(ctx, storedb.MarkEmbeddingJobDoneParams{
+			Provider:     opts.Provider,
+			Model:        opts.Model,
+			InputVersion: opts.InputVersion,
+			UpdatedAt:    embeddedAt,
+			MessageID:    job.MessageID,
+		}); err != nil {
 			return err
 		}
 	}
@@ -372,22 +342,19 @@ func (s *Store) markEmbeddingJobsDone(ctx context.Context, opts EmbeddingDrainOp
 		return err
 	}
 	defer rollback(tx)
+	qtx := s.q.WithTx(tx)
 	now := opts.Now().Format(timeLayout)
 	for _, job := range jobs {
-		if _, err := tx.ExecContext(ctx, `delete from message_embeddings where message_id = ?`, job.MessageID); err != nil {
+		if err := qtx.DeleteMessageEmbeddingsByMessage(ctx, job.MessageID); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `
-			update embedding_jobs
-			set state = 'done',
-				provider = ?,
-				model = ?,
-				input_version = ?,
-				last_error = '',
-				locked_at = null,
-				updated_at = ?
-			where message_id = ?
-		`, opts.Provider, opts.Model, opts.InputVersion, now, job.MessageID); err != nil {
+		if err := qtx.MarkEmptyEmbeddingJobDone(ctx, storedb.MarkEmptyEmbeddingJobDoneParams{
+			Provider:     opts.Provider,
+			Model:        opts.Model,
+			InputVersion: opts.InputVersion,
+			UpdatedAt:    now,
+			MessageID:    job.MessageID,
+		}); err != nil {
 			return err
 		}
 	}
@@ -400,20 +367,18 @@ func (s *Store) markEmbeddingJobsRateLimited(ctx context.Context, opts Embedding
 		return err
 	}
 	defer rollback(tx)
+	qtx := s.q.WithTx(tx)
 	now := opts.Now().Format(timeLayout)
 	lastError := trimStoredError(cause)
 	for _, job := range jobs {
-		if _, err := tx.ExecContext(ctx, `
-			update embedding_jobs
-			set state = 'pending',
-				provider = ?,
-				model = ?,
-				input_version = ?,
-				last_error = ?,
-				locked_at = null,
-				updated_at = ?
-			where message_id = ?
-		`, opts.Provider, opts.Model, opts.InputVersion, lastError, now, job.MessageID); err != nil {
+		if err := qtx.MarkEmbeddingJobRateLimited(ctx, storedb.MarkEmbeddingJobRateLimitedParams{
+			Provider:     opts.Provider,
+			Model:        opts.Model,
+			InputVersion: opts.InputVersion,
+			LastError:    lastError,
+			UpdatedAt:    now,
+			MessageID:    job.MessageID,
+		}); err != nil {
 			return err
 		}
 	}
@@ -426,6 +391,7 @@ func (s *Store) markEmbeddingJobsFailed(ctx context.Context, opts EmbeddingDrain
 		return err
 	}
 	defer rollback(tx)
+	qtx := s.q.WithTx(tx)
 	now := opts.Now().Format(timeLayout)
 	lastError := trimStoredError(cause)
 	for _, job := range jobs {
@@ -434,18 +400,16 @@ func (s *Store) markEmbeddingJobsFailed(ctx context.Context, opts EmbeddingDrain
 		if attempts >= maxEmbeddingAttempts {
 			state = "failed"
 		}
-		if _, err := tx.ExecContext(ctx, `
-			update embedding_jobs
-			set state = ?,
-				attempts = ?,
-				provider = ?,
-				model = ?,
-				input_version = ?,
-				last_error = ?,
-				locked_at = null,
-				updated_at = ?
-			where message_id = ?
-		`, state, attempts, opts.Provider, opts.Model, opts.InputVersion, lastError, now, job.MessageID); err != nil {
+		if err := qtx.MarkEmbeddingJobFailed(ctx, storedb.MarkEmbeddingJobFailedParams{
+			State:        state,
+			Attempts:     int64(attempts),
+			Provider:     opts.Provider,
+			Model:        opts.Model,
+			InputVersion: opts.InputVersion,
+			LastError:    lastError,
+			UpdatedAt:    now,
+			MessageID:    job.MessageID,
+		}); err != nil {
 			return err
 		}
 	}
@@ -495,9 +459,8 @@ func DecodeEmbeddingVector(blob []byte) ([]float32, error) {
 }
 
 func (s *Store) EmbeddingBacklog(ctx context.Context) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx, `select count(*) from embedding_jobs where state = 'pending'`).Scan(&count)
-	return count, err
+	count, err := s.q.CountEmbeddingBacklog(ctx)
+	return int(count), err
 }
 
 func (s *Store) RequeueAllEmbeddingJobs(ctx context.Context, opts EmbeddingDrainOptions) (int, error) {
@@ -507,36 +470,26 @@ func (s *Store) RequeueAllEmbeddingJobs(ctx context.Context, opts EmbeddingDrain
 		return 0, err
 	}
 	defer rollback(tx)
+	qtx := s.q.WithTx(tx)
 	now := opts.Now().Format(timeLayout)
-	if _, err := tx.ExecContext(ctx, `
-		insert or ignore into embedding_jobs(
-			message_id, state, attempts, provider, model, input_version, last_error, locked_at, updated_at
-		)
-		select id, 'pending', 0, ?, ?, ?, '', null, ?
-		from messages
-	`, opts.Provider, opts.Model, opts.InputVersion, now); err != nil {
+	if err := qtx.InsertMissingEmbeddingJobs(ctx, storedb.InsertMissingEmbeddingJobsParams{
+		Provider:     opts.Provider,
+		Model:        opts.Model,
+		InputVersion: opts.InputVersion,
+		UpdatedAt:    now,
+	}); err != nil {
 		return 0, err
 	}
-	result, err := tx.ExecContext(ctx, `
-		update embedding_jobs
-		set state = 'pending',
-			attempts = 0,
-			provider = ?,
-			model = ?,
-			input_version = ?,
-			last_error = '',
-			locked_at = null,
-			updated_at = ?
-		where message_id in (select id from messages)
-	`, opts.Provider, opts.Model, opts.InputVersion, now)
+	affected, err := qtx.RequeueAllEmbeddingJobs(ctx, storedb.RequeueAllEmbeddingJobsParams{
+		Provider:     opts.Provider,
+		Model:        opts.Model,
+		InputVersion: opts.InputVersion,
+		UpdatedAt:    now,
+	})
 	if err != nil {
 		return 0, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
 		return 0, err
 	}
 	return int(affected), nil

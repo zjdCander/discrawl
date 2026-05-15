@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/openclaw/crawlkit/vector"
+	"github.com/openclaw/discrawl/internal/store/storedb"
 )
 
 const (
@@ -42,28 +43,22 @@ type SemanticSearchOptions struct {
 }
 
 func (s *Store) GetSyncState(ctx context.Context, scope string) (string, error) {
-	var cursor sql.NullString
-	err := s.db.QueryRowContext(ctx, `select cursor from sync_state where scope = ?`, scope).Scan(&cursor)
+	cursor, err := s.q.GetSyncState(ctx, scope)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
 		return "", err
 	}
-	return cursor.String, nil
+	return cursor, nil
 }
 
 func (s *Store) ChannelMessageBounds(ctx context.Context, channelID string) (string, string, error) {
-	var oldest sql.NullString
-	var newest sql.NullString
-	if err := s.db.QueryRowContext(ctx, `
-		select min(id), max(id)
-		from messages
-		where channel_id = ?
-	`, channelID).Scan(&oldest, &newest); err != nil {
+	row, err := s.q.ChannelMessageBounds(ctx, channelID)
+	if err != nil {
 		return "", "", err
 	}
-	return oldest.String, newest.String, nil
+	return row.OldestID, row.NewestID, nil
 }
 
 func (s *Store) SearchMessages(ctx context.Context, opts SearchOptions) ([]SearchResult, error) {
@@ -398,17 +393,11 @@ func (s *Store) HasMessageEmbeddings(ctx context.Context, provider, model, input
 	}
 	queryCtx, cancel := withQueryTimeout(ctx)
 	defer cancel()
-	var exists int
-	err := s.db.QueryRowContext(queryCtx, `
-		select exists(
-			select 1
-			from message_embeddings
-			where provider = ?
-			  and model = ?
-			  and input_version = ?
-		)
-	`, provider, model, inputVersion).Scan(&exists)
-	return exists == 1, err
+	return s.q.HasMessageEmbeddings(queryCtx, storedb.HasMessageEmbeddingsParams{
+		Provider:     provider,
+		Model:        model,
+		InputVersion: inputVersion,
+	})
 }
 
 func (s *Store) CheckMessageFTS(ctx context.Context) error {
@@ -498,186 +487,211 @@ func (s *Store) Members(ctx context.Context, guildID, query string, limit int) (
 	if limit <= 0 {
 		limit = 100
 	}
-	args := []any{}
-	clauses := []string{"1=1"}
+	var out []MemberRow
 	if guildID != "" {
-		clauses = append(clauses, "guild_id = ?")
-		args = append(args, guildID)
+		rows, err := s.q.ListMembersByGuild(ctx, storedb.ListMembersByGuildParams{GuildID: guildID, Limit: int64(limit)})
+		if err != nil {
+			return nil, err
+		}
+		out = make([]MemberRow, 0, len(rows))
+		for _, row := range rows {
+			member := MemberRow{
+				GuildID:       row.GuildID,
+				UserID:        row.UserID,
+				Username:      row.Username,
+				GlobalName:    row.GlobalName,
+				DisplayName:   row.DisplayName,
+				Nick:          row.Nick,
+				Discriminator: row.Discriminator,
+				Avatar:        row.Avatar,
+				RoleIDsJSON:   row.RoleIdsJson,
+				Bot:           row.Bot == 1,
+				JoinedAt:      parseTime(row.JoinedAt),
+				RawJSON:       row.RawJson,
+			}
+			enrichMemberRow(&member)
+			out = append(out, member)
+		}
+		return out, nil
 	}
-	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, `
-		select guild_id, user_id, username, coalesce(global_name, ''), coalesce(display_name, ''),
-		       coalesce(nick, ''), coalesce(discriminator, ''), coalesce(avatar, ''),
-		       role_ids_json, bot, coalesce(joined_at, ''), raw_json
-		from members
-		where `+strings.Join(clauses, " and ")+`
-		order by coalesce(nullif(display_name, ''), nullif(nick, ''), nullif(global_name, ''), username), username
-		limit ?
-	`, args...)
+	rows, err := s.q.ListMembers(ctx, int64(limit))
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMemberRows(rows)
+	out = make([]MemberRow, 0, len(rows))
+	for _, row := range rows {
+		member := MemberRow{
+			GuildID:       row.GuildID,
+			UserID:        row.UserID,
+			Username:      row.Username,
+			GlobalName:    row.GlobalName,
+			DisplayName:   row.DisplayName,
+			Nick:          row.Nick,
+			Discriminator: row.Discriminator,
+			Avatar:        row.Avatar,
+			RoleIDsJSON:   row.RoleIdsJson,
+			Bot:           row.Bot == 1,
+			JoinedAt:      parseTime(row.JoinedAt),
+			RawJSON:       row.RawJson,
+		}
+		enrichMemberRow(&member)
+		out = append(out, member)
+	}
+	return out, nil
 }
 
 func (s *Store) MemberByID(ctx context.Context, userID string) ([]MemberRow, error) {
-	rows, err := s.db.QueryContext(ctx, `
-		select guild_id, user_id, username, coalesce(global_name, ''), coalesce(display_name, ''),
-		       coalesce(nick, ''), coalesce(discriminator, ''), coalesce(avatar, ''),
-		       role_ids_json, bot, coalesce(joined_at, ''), raw_json
-		from members
-		where user_id = ?
-		order by guild_id, username
-	`, userID)
+	rows, err := s.q.ListMembersByUserID(ctx, userID)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	return scanMemberRows(rows)
+	out := make([]MemberRow, 0, len(rows))
+	for _, row := range rows {
+		member := MemberRow{
+			GuildID:       row.GuildID,
+			UserID:        row.UserID,
+			Username:      row.Username,
+			GlobalName:    row.GlobalName,
+			DisplayName:   row.DisplayName,
+			Nick:          row.Nick,
+			Discriminator: row.Discriminator,
+			Avatar:        row.Avatar,
+			RoleIDsJSON:   row.RoleIdsJson,
+			Bot:           row.Bot == 1,
+			JoinedAt:      parseTime(row.JoinedAt),
+			RawJSON:       row.RawJson,
+		}
+		enrichMemberRow(&member)
+		out = append(out, member)
+	}
+	return out, nil
 }
 
 func (s *Store) Channels(ctx context.Context, guildID string) ([]ChannelRow, error) {
-	args := []any{}
-	query := `
-		select id, guild_id, coalesce(parent_id, ''), kind, name, coalesce(topic, ''), position,
-		       is_nsfw, is_archived, is_locked, is_private_thread, coalesce(thread_parent_id, ''), coalesce(archive_timestamp, '')
-		from channels
-	`
+	var out []ChannelRow
 	if guildID != "" {
-		query += ` where guild_id = ?`
-		args = append(args, guildID)
+		rows, err := s.q.ListChannelsByGuild(ctx, guildID)
+		if err != nil {
+			return nil, err
+		}
+		out = make([]ChannelRow, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, ChannelRow{
+				ID:               row.ID,
+				GuildID:          row.GuildID,
+				ParentID:         row.ParentID,
+				Kind:             row.Kind,
+				Name:             row.Name,
+				Topic:            row.Topic,
+				Position:         int(row.Position.Int64),
+				IsNSFW:           row.IsNsfw == 1,
+				IsArchived:       row.IsArchived == 1,
+				IsLocked:         row.IsLocked == 1,
+				IsPrivateThread:  row.IsPrivateThread == 1,
+				ThreadParentID:   row.ThreadParentID,
+				ArchiveTimestamp: parseTime(row.ArchiveTimestamp),
+			})
+		}
+		return out, nil
 	}
-	query += ` order by guild_id, position, name`
-	rows, err := s.db.QueryContext(ctx, query, args...)
+	rows, err := s.q.ListChannels(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = rows.Close() }()
-	var out []ChannelRow
-	for rows.Next() {
-		var row ChannelRow
-		var archived int
-		var locked int
-		var nsfw int
-		var priv int
-		var archiveTS string
-		if err := rows.Scan(&row.ID, &row.GuildID, &row.ParentID, &row.Kind, &row.Name, &row.Topic, &row.Position, &nsfw, &archived, &locked, &priv, &row.ThreadParentID, &archiveTS); err != nil {
-			return nil, err
-		}
-		row.IsNSFW = nsfw == 1
-		row.IsArchived = archived == 1
-		row.IsLocked = locked == 1
-		row.IsPrivateThread = priv == 1
-		row.ArchiveTimestamp = parseTime(archiveTS)
-		out = append(out, row)
+	out = make([]ChannelRow, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, ChannelRow{
+			ID:               row.ID,
+			GuildID:          row.GuildID,
+			ParentID:         row.ParentID,
+			Kind:             row.Kind,
+			Name:             row.Name,
+			Topic:            row.Topic,
+			Position:         int(row.Position.Int64),
+			IsNSFW:           row.IsNsfw == 1,
+			IsArchived:       row.IsArchived == 1,
+			IsLocked:         row.IsLocked == 1,
+			IsPrivateThread:  row.IsPrivateThread == 1,
+			ThreadParentID:   row.ThreadParentID,
+			ArchiveTimestamp: parseTime(row.ArchiveTimestamp),
+		})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (s *Store) GuildChannelCount(ctx context.Context, guildID string) (int, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `
-		select count(*)
-		from channels
-		where guild_id = ?
-	`, guildID).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+	count, err := s.q.CountChannelsByGuild(ctx, guildID)
+	return int(count), err
 }
 
 func (s *Store) GuildMemberCount(ctx context.Context, guildID string) (int, error) {
-	var count int
-	if err := s.db.QueryRowContext(ctx, `
-		select count(*)
-		from members
-		where guild_id = ?
-	`, guildID).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+	count, err := s.q.CountMembersByGuild(ctx, guildID)
+	return int(count), err
 }
 
 func (s *Store) IncompleteMessageChannelIDs(ctx context.Context, guildID string) ([]string, error) {
-	args := []any{}
-	query := `
-		select c.id
-		from channels c
-		where c.kind in ('text', 'news', 'announcement', 'thread_public', 'thread_private', 'thread_news', 'thread_announcement')
-	`
 	if guildID != "" {
-		query += ` and c.guild_id = ?`
-		args = append(args, guildID)
+		return s.q.ListIncompleteMessageChannelIDsByGuild(ctx, guildID)
 	}
-	query += `
-		and not exists (
-			select 1
-			from sync_state s
-			where s.scope = 'channel:' || c.id || ':history_complete'
-		)
-		and not exists (
-			select 1
-			from sync_state s
-			where s.scope = 'channel:' || c.id || ':unavailable'
-		)
-		order by c.id
-	`
-	rows, err := s.db.QueryContext(ctx, query, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	var out []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
-	}
-	return out, rows.Err()
+	return s.q.ListIncompleteMessageChannelIDs(ctx)
 }
 
 func (s *Store) Status(ctx context.Context, dbPath, defaultGuildID string) (Status, error) {
 	status := Status{DBPath: dbPath, DefaultGuildID: defaultGuildID}
-	queries := map[string]*int{
-		`select count(*) from guilds`:                                 &status.GuildCount,
-		`select count(*) from channels`:                               &status.ChannelCount,
-		`select count(*) from messages`:                               &status.MessageCount,
-		`select count(*) from members`:                                &status.MemberCount,
-		`select count(*) from embedding_jobs where state = 'pending'`: &status.EmbeddingBacklog,
-	}
-	for query, target := range queries {
-		if err := s.db.QueryRowContext(ctx, query).Scan(target); err != nil {
-			return Status{}, err
-		}
-	}
-	if err := s.db.QueryRowContext(ctx, `select count(*) from channels where kind like 'thread_%'`).Scan(&status.ThreadCount); err != nil {
-		return Status{}, err
-	}
-	var lastSync string
-	_ = s.db.QueryRowContext(ctx, `select updated_at from sync_state where scope = 'sync:last_success'`).Scan(&lastSync)
-	status.LastSyncAt = parseTime(lastSync)
-	var lastTail string
-	_ = s.db.QueryRowContext(ctx, `select updated_at from sync_state where scope = 'tail:last_event'`).Scan(&lastTail)
-	status.LastTailEventAt = parseTime(lastTail)
-	if defaultGuildID != "" {
-		_ = s.db.QueryRowContext(ctx, `select name from guilds where id = ?`, defaultGuildID).Scan(&status.DefaultGuildName)
-	}
-	rows, err := s.db.QueryContext(ctx, `select id from guilds order by id`)
+	guildCount, err := s.q.CountGuilds(ctx)
 	if err != nil {
 		return Status{}, err
 	}
-	defer func() { _ = rows.Close() }()
-	for rows.Next() {
-		var guildID string
-		if err := rows.Scan(&guildID); err != nil {
+	channelCount, err := s.q.CountChannels(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	messageCount, err := s.q.CountMessages(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	memberCount, err := s.q.CountMembers(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	embeddingBacklog, err := s.q.CountEmbeddingBacklog(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	threadCount, err := s.q.CountThreads(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	status.GuildCount = int(guildCount)
+	status.ChannelCount = int(channelCount)
+	status.MessageCount = int(messageCount)
+	status.MemberCount = int(memberCount)
+	status.EmbeddingBacklog = int(embeddingBacklog)
+	status.ThreadCount = int(threadCount)
+
+	lastSync, err := s.q.GetSyncUpdatedAt(ctx, "sync:last_success")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Status{}, err
+	}
+	status.LastSyncAt = parseTime(lastSync)
+	lastTail, err := s.q.GetSyncUpdatedAt(ctx, "tail:last_event")
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return Status{}, err
+	}
+	status.LastTailEventAt = parseTime(lastTail)
+	if defaultGuildID != "" {
+		name, err := s.q.GetGuildName(ctx, defaultGuildID)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return Status{}, err
 		}
-		status.AccessibleGuildIDs = append(status.AccessibleGuildIDs, guildID)
+		status.DefaultGuildName = name
 	}
-	return status, rows.Err()
+	guildIDs, err := s.q.ListGuildIDs(ctx)
+	if err != nil {
+		return Status{}, err
+	}
+	status.AccessibleGuildIDs = guildIDs
+	return status, nil
 }
 
 func (s *Store) ReadOnlyQuery(ctx context.Context, query string) ([]string, [][]string, error) {
