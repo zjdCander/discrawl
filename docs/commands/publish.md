@@ -77,6 +77,12 @@ README files without Discrawl report markers are left alone.
 - `embedding_jobs`
 - raw bot tokens or any local secret
 
+`publish` exports cached media only; it does not download missing Discord
+attachment bytes. Run `discrawl sync --with-media` or `discrawl attachments
+fetch` before publishing when the Git snapshot should include newly discovered
+media. Scheduled publishers can set `sync.attachment_media = true` and leave
+`share.media = true`, the default.
+
 ## See also
 
 - [Git snapshots guide](../guides/git-snapshots.html)

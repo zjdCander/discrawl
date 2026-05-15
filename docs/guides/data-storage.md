@@ -32,6 +32,8 @@ Attachment binaries are not stored in SQLite. SQLite stores attachment metadata,
 
 `discrawl attachments fetch` and `discrawl sync --with-media` download media into `cache_dir/media` and record the relative media path, SHA-256, byte size, fetch time, and fetch status on the attachment row.
 
+Discord attachment URLs are not guaranteed to stay fetchable forever. Expired or removed CDN objects are recorded as failed fetches with their HTTP status, commonly `404`; already cached files remain usable and can still be exported.
+
 Set `sync.attachment_text = false` if you want to keep attachment metadata and filenames but disable attachment body fetches for text indexing.
 
 ## Multi-guild ready

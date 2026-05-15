@@ -269,7 +269,7 @@ Bot sync modes:
 `--all` ignores `default_guild_id` and fans out across every discovered guild the bot can access.
 `--skip-members` refreshes guild/channel/message data without crawling the full member list, which is useful for frequent Git snapshot publishers that only need latest messages.
 `--latest-only` is still accepted for explicit latest-only runs; it is now the default for untargeted `sync`. Use `--all-channels` to opt out of the fast default without doing a full historical crawl.
-`--with-media` downloads missing attachment media into `cache_dir/media` after the message sync/import phase.
+`--with-media` downloads missing attachment media into `cache_dir/media` after the message sync/import phase. Discord attachment URLs can expire or disappear; those downloads are marked `failed` with the HTTP status, usually `404`, while successfully fetched files remain cached and can still be published.
 When `--channels` includes a forum channel id, `discrawl` expands that forum's threads and syncs their messages as part of the targeted run.
 `--since` limits initial history/bootstrap and full-history backfill to messages at or after the given RFC3339 timestamp. It does not mark older history as complete, so a later `sync --full` without `--since` can continue the backfill.
 Long runs now emit periodic progress logs to stderr so large backfills and Git snapshot imports do not look hung.
@@ -385,7 +385,7 @@ discrawl attachments fetch --channel general --days 7
 discrawl attachments fetch --missing --max-bytes 104857600
 ```
 
-Media bytes are stored under `cache_dir/media`, not in SQLite. SQLite stores attachment metadata, content hash, relative media path, fetch status, and fetch error. Cached non-DM media is included in Git snapshots by default; `publish --no-media` omits it.
+Media bytes are stored under `cache_dir/media`, not in SQLite. SQLite stores attachment metadata, content hash, relative media path, fetch status, and fetch error. `attachments fetch` and `sync --with-media` only populate the local cache; run `publish --push` afterward to copy cached non-DM media into the Git backup. Cached non-DM media is included in Git snapshots by default; `publish --no-media` omits it.
 
 ### `dms`
 
@@ -532,6 +532,8 @@ Hybrid mode is supported too: keep normal Discord credentials configured and set
 
 Git snapshots publish non-DM archive tables and cached non-DM attachment media by default. DMs, desktop wiretap rows, DM media, and local secrets are never exported. Use `publish --no-media` to omit cached media files.
 Subscribers can use `subscribe --no-media` or `update --no-media` to import only SQLite rows and skip restoring cached files.
+
+Media backup is a two-step publisher workflow: first fetch bytes with `discrawl sync --with-media` or `discrawl attachments fetch`, then publish with `discrawl publish --push`. Scheduled publishers that should include media can set `sync.attachment_media = true` and leave `share.media = true`, which is the default. `publish` never downloads missing Discord files by itself; it exports only media already present in the local cache.
 
 Publish filters narrow only the Git snapshot. The publisher can still sync and
 keep a richer local SQLite archive, then publish a smaller view for Git-only
@@ -776,7 +778,7 @@ Proven DMs use `@me` as their guild id. Unclassifiable desktop-cache payloads ar
 
 SQLite schema migrations are versioned with `PRAGMA user_version`. Startup now fails fast when a local DB schema is newer than the supported binary.
 
-Attachment binaries are not stored in SQLite. `attachments fetch` and `sync --with-media` write media bytes under `cache_dir/media`; SQLite stores the relative media path, content hash, size, and fetch status.
+Attachment binaries are not stored in SQLite. `attachments fetch` and `sync --with-media` write media bytes under `cache_dir/media`; SQLite stores the relative media path, content hash, size, fetch status, and fetch error. Discord CDN `404` responses mean the remote object is no longer fetchable, not that local storage or Git snapshot export failed.
 
 Set `sync.attachment_text = false` if you want to keep attachment metadata and filenames but disable attachment body fetches for text indexing.
 
