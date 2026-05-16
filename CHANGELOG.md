@@ -8,6 +8,8 @@
 
 ### Fixes
 
+- Bounded gzip media restore and hash verification so malformed shared snapshots cannot decompress unbounded data.
+
 ## 0.8.0 - 2026-05-15
 
 ### Changes
