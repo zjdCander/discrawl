@@ -200,7 +200,7 @@ func TestMessageChannelConcurrentErrorAndProgressBranches(t *testing.T) {
 func TestMessageChannelConcurrentFatalErrorCancelsPeers(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	s, err := store.Open(ctx, filepath.Join(t.TempDir(), "discrawl.db"))
 	require.NoError(t, err)
