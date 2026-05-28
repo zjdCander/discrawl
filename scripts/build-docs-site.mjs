@@ -488,15 +488,18 @@ main{min-width:0;padding:30px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
 .hero-home h1{font-size:clamp(2.1rem,4.6vw,3.6rem);line-height:1.02;letter-spacing:-.025em;font-weight:700;margin:0 0 18px;max-width:18ch}
 .hero-home h1 em{font-style:normal;color:var(--magenta);font-weight:700;background:linear-gradient(180deg,transparent 60%,rgba(243,100,162,.18) 60%);padding:0 .12em}
 .lede{margin:0 0 24px;color:var(--ink-dim);font-size:clamp(1rem,1.2vw,1.06rem);line-height:1.6;max-width:48ch}
-.cta{display:flex;gap:10px;flex-wrap:wrap}
-.cta-primary,.cta-secondary{display:inline-flex;align-items:center;border-radius:7px;padding:10px 18px;font-weight:600;font-size:.86rem;text-decoration:none;font-family:"JetBrains Mono",ui-monospace,monospace;transition:transform .15s,box-shadow .15s,background .15s,border-color .15s,color .15s;border:1px solid transparent}
+.cta{display:flex;gap:10px;align-items:stretch;flex-wrap:nowrap}
+.cta-primary,.cta-secondary{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;white-space:nowrap;word-break:keep-all;border-radius:7px;padding:10px 18px;font-weight:600;font-size:.86rem;line-height:1.2;text-decoration:none;font-family:"JetBrains Mono",ui-monospace,monospace;transition:transform .15s,box-shadow .15s,background .15s,border-color .15s,color .15s;border:1px solid transparent}
 .cta-primary{background:var(--cyan);color:var(--bg);border-color:var(--cyan)}
 .cta-primary:hover{background:var(--magenta);border-color:var(--magenta);color:var(--bg);transform:translateY(-1px);box-shadow:0 8px 22px rgba(243,100,162,.25)}
 .cta-secondary{border-color:var(--line);color:var(--ink);background:transparent}
 .cta-secondary:hover{border-color:var(--cyan);color:var(--cyan);transform:translateY(-1px)}
-.home-install{display:inline-flex;align-items:center;gap:8px;min-width:0;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:7px;padding:10px 14px;font:600 .84rem/1.35 "JetBrains Mono",ui-monospace,monospace;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
-.home-install .prompt{color:var(--cyan)}
-.home-install code{background:transparent;border:0;color:var(--ink);padding:0;font:inherit;white-space:nowrap}
+.home-install{display:flex;align-items:center;gap:8px;flex:1 1 23rem;min-width:22rem;max-width:34em;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:7px;padding:10px 10px 10px 14px;font:600 .84rem/1.35 "JetBrains Mono",ui-monospace,monospace;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+.home-install .prompt{color:var(--cyan);user-select:none;flex:0 0 auto}
+.home-install code{flex:1;min-width:0;background:transparent;border:0;color:var(--ink);padding:0;font:inherit;white-space:pre;overflow:hidden;text-overflow:ellipsis}
+.home-install .copy{flex:0 0 auto;background:rgba(255,255,255,.05);color:var(--ink-dim);border:1px solid var(--line);border-radius:5px;padding:5px 10px;font:600 .68rem/1 "JetBrains Mono",monospace;cursor:pointer;transition:background .15s,border-color .15s,color .15s}
+.home-install .copy:hover{border-color:var(--cyan);color:var(--cyan)}
+.home-install .copy.copied{background:var(--cyan);border-color:var(--cyan);color:var(--bg)}
 .hero-snippet{margin:0;background:var(--panel);color:var(--ink);border-radius:10px;padding:20px 22px;font:500 .84rem/1.7 "JetBrains Mono",ui-monospace,monospace;border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;position:relative}
 .hero-snippet:before{content:"$ wiretap";position:absolute;top:8px;right:14px;font-size:.62rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase}
 .hero-snippet code{background:transparent;border:0;padding:0;color:inherit;font:inherit;display:block;white-space:pre}
@@ -591,7 +594,7 @@ main{min-width:0;padding:30px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
   .hero-meta{width:100%;justify-content:flex-start}
   .hero-home{grid-template-columns:1fr;gap:24px;padding-top:8px}
   .hero-home h1{font-size:clamp(1.95rem,8vw,2.5rem);max-width:none}
-  .home-install{width:100%}
+  .home-install{min-width:20rem}
   .hero-snippet{font-size:.76rem;padding:16px 16px}
   .features{grid-template-columns:1fr;margin-top:22px}
   .doc{padding:20px;border-radius:8px}
@@ -603,6 +606,9 @@ main{min-width:0;padding:30px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
   main{padding:60px 14px 48px}
   .doc{padding:18px 16px}
   .doc-home{padding-inline:16px}
+  .cta{flex-wrap:wrap}
+  .cta-primary,.cta-secondary{flex:1 1 calc(50% - 5px);padding-inline:12px}
+  .home-install{width:100%;min-width:0;flex-basis:100%}
   .home-install code{white-space:normal;overflow-wrap:anywhere}
   .doc pre{margin-left:-16px;margin-right:-16px;border-radius:0;border-left:0;border-right:0}
 }
@@ -655,7 +661,9 @@ else mobileNav.addListener?.(syncSidebarForViewport);
 const input=document.getElementById('doc-search');
 input?.addEventListener('input',()=>{const q=input.value.trim().toLowerCase();document.querySelectorAll('nav section').forEach(sec=>{let any=false;sec.querySelectorAll('.nav-link').forEach(a=>{const m=!q||a.textContent.toLowerCase().includes(q);a.style.display=m?'block':'none';if(m)any=true});sec.style.display=any?'block':'none'})});
 
-document.querySelectorAll('.doc pre').forEach(pre=>{const btn=document.createElement('button');btn.type='button';btn.className='copy';btn.textContent='copy';btn.addEventListener('click',async()=>{const code=pre.querySelector('code')?.textContent??'';try{await navigator.clipboard.writeText(code);btn.textContent='copied';btn.classList.add('copied');setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied')},1400)}catch{btn.textContent='failed';setTimeout(()=>{btn.textContent='copy'},1400)}});pre.appendChild(btn)});
+function attachCopy(target,getText){const btn=document.createElement('button');btn.type='button';btn.className='copy';btn.textContent='copy';btn.addEventListener('click',async()=>{try{await navigator.clipboard.writeText(getText());btn.textContent='copied';btn.classList.add('copied');setTimeout(()=>{btn.textContent='copy';btn.classList.remove('copied')},1400)}catch{btn.textContent='failed';setTimeout(()=>{btn.textContent='copy'},1400)}});target.appendChild(btn)}
+document.querySelectorAll('.doc pre').forEach(pre=>attachCopy(pre,()=>pre.querySelector('code')?.textContent??''));
+document.querySelectorAll('.home-install').forEach(el=>attachCopy(el,()=>el.querySelector('code')?.textContent??''));
 
 const tocLinks=document.querySelectorAll('.toc a');
 if(tocLinks.length){const map=new Map();tocLinks.forEach(a=>{const id=a.getAttribute('href').slice(1);const el=document.getElementById(id);if(el)map.set(el,a)});const setActive=l=>{tocLinks.forEach(x=>x.classList.remove('active'));l.classList.add('active')};const obs=new IntersectionObserver(entries=>{const visible=entries.filter(e=>e.isIntersecting).sort((a,b)=>a.boundingClientRect.top-b.boundingClientRect.top);if(visible.length){const link=map.get(visible[0].target);if(link)setActive(link)}},{rootMargin:'-15% 0px -65% 0px',threshold:0});map.forEach((_,el)=>obs.observe(el))}
