@@ -7,6 +7,7 @@ const docsDir = path.join(root, "docs");
 const outDir = path.join(root, "dist", "docs-site");
 const repoEditBase = "https://github.com/openclaw/discrawl/edit/main/docs";
 const siteUrl = "https://discrawl.sh";
+const brewInstall = "brew install openclaw/tap/discrawl";
 
 const sections = [
   ["Start", ["README.md", "install.md", "configuration.md", "bot-setup.md", "security.md", "contact.md"]],
@@ -397,6 +398,10 @@ function landingHero(rootPrefix) {
           <div class="cta">
             <a class="cta-primary" href="${rootPrefix}install.html">Get started</a>
             <a class="cta-secondary" href="https://github.com/openclaw/discrawl" rel="noopener">View on GitHub</a>
+            <div class="home-install" aria-label="Install with Homebrew">
+              <span class="prompt" aria-hidden="true">$</span>
+              <code>${escapeHtml(brewInstall)}</code>
+            </div>
           </div>
         </div>
         <pre class="hero-snippet" aria-hidden="true"><code><span class="prompt">$</span> discrawl init
@@ -489,6 +494,9 @@ main{min-width:0;padding:30px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
 .cta-primary:hover{background:var(--magenta);border-color:var(--magenta);color:var(--bg);transform:translateY(-1px);box-shadow:0 8px 22px rgba(243,100,162,.25)}
 .cta-secondary{border-color:var(--line);color:var(--ink);background:transparent}
 .cta-secondary:hover{border-color:var(--cyan);color:var(--cyan);transform:translateY(-1px)}
+.home-install{display:inline-flex;align-items:center;gap:8px;min-width:0;border:1px solid var(--line);background:var(--panel);color:var(--ink);border-radius:7px;padding:10px 14px;font:600 .84rem/1.35 "JetBrains Mono",ui-monospace,monospace;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+.home-install .prompt{color:var(--cyan)}
+.home-install code{background:transparent;border:0;color:var(--ink);padding:0;font:inherit;white-space:nowrap}
 .hero-snippet{margin:0;background:var(--panel);color:var(--ink);border-radius:10px;padding:20px 22px;font:500 .84rem/1.7 "JetBrains Mono",ui-monospace,monospace;border:1px solid var(--line);box-shadow:var(--shadow);overflow:hidden;position:relative}
 .hero-snippet:before{content:"$ wiretap";position:absolute;top:8px;right:14px;font-size:.62rem;color:var(--muted);letter-spacing:.14em;text-transform:uppercase}
 .hero-snippet code{background:transparent;border:0;padding:0;color:inherit;font:inherit;display:block;white-space:pre}
@@ -583,6 +591,7 @@ main{min-width:0;padding:30px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
   .hero-meta{width:100%;justify-content:flex-start}
   .hero-home{grid-template-columns:1fr;gap:24px;padding-top:8px}
   .hero-home h1{font-size:clamp(1.95rem,8vw,2.5rem);max-width:none}
+  .home-install{width:100%}
   .hero-snippet{font-size:.76rem;padding:16px 16px}
   .features{grid-template-columns:1fr;margin-top:22px}
   .doc{padding:20px;border-radius:8px}
@@ -594,6 +603,7 @@ main{min-width:0;padding:30px clamp(20px,4.5vw,56px) 80px;max-width:1180px;margi
   main{padding:60px 14px 48px}
   .doc{padding:18px 16px}
   .doc-home{padding-inline:16px}
+  .home-install code{white-space:normal;overflow-wrap:anywhere}
   .doc pre{margin-left:-16px;margin-right:-16px;border-radius:0;border-left:0;border-right:0}
 }
 `;

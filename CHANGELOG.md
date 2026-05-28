@@ -4,6 +4,7 @@
 
 ### Changes
 
+- Added the Homebrew install command to the `discrawl.sh` landing hero and agent docs index.
 - Update `crawlkit` to v0.10.0.
 - Add read-only Cloudflare remote archive scaffolding with `[remote]` config,
   `subscribe-cloud`, GitHub-backed `remote login` with OAuth or token-env
