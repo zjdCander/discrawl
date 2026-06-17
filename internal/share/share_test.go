@@ -484,7 +484,7 @@ func TestImportIncrementalRestoresMediaWhenTablesUnchanged(t *testing.T) {
 	require.Equal(t, body, got)
 }
 
-func TestShareIncrementalPlanRejectsUnsupportedModes(t *testing.T) {
+func TestShareIncrementalPlanHandlesSupportedModesAndRejectsOthers(t *testing.T) {
 	_, supported := shareIncrementalPlan(snapshot.ImportPlan{Full: true, Reason: "schema changed"})
 	require.False(t, supported)
 
@@ -494,13 +494,14 @@ func TestShareIncrementalPlanRejectsUnsupportedModes(t *testing.T) {
 	}}})
 	require.False(t, supported)
 
-	_, supported = shareIncrementalPlan(snapshot.ImportPlan{Tables: []snapshot.TableImportPlan{{
+	plan, supported := shareIncrementalPlan(snapshot.ImportPlan{Tables: []snapshot.TableImportPlan{{
 		Table: snapshot.TableManifest{Name: "messages"},
 		Mode:  snapshot.TableImportReplace,
 	}}})
-	require.False(t, supported)
+	require.True(t, supported)
+	require.Equal(t, snapshot.TableImportReplace, plan.Tables[0].Mode)
 
-	plan, supported := shareIncrementalPlan(snapshot.ImportPlan{Tables: []snapshot.TableImportPlan{
+	plan, supported = shareIncrementalPlan(snapshot.ImportPlan{Tables: []snapshot.TableImportPlan{
 		{Table: snapshot.TableManifest{Name: "messages"}, Mode: snapshot.TableImportFiles},
 		{Table: snapshot.TableManifest{Name: "guilds"}, Mode: snapshot.TableImportFiles},
 		{Table: snapshot.TableManifest{Name: "channels"}, Mode: snapshot.TableImportReplace},
@@ -522,6 +523,17 @@ func TestMessageFTSHelpers(t *testing.T) {
 	require.False(t, ok)
 	require.Nil(t, nullIfEmpty(""))
 	require.Equal(t, "value", nullIfEmpty("value"))
+}
+
+func TestImportPlanSearchRebuildsKeepsEarlierChannelRebuild(t *testing.T) {
+	rebuildMessages, rebuildMembers := importPlanSearchRebuilds(snapshot.ImportPlan{
+		Tables: []snapshot.TableImportPlan{
+			{Table: snapshot.TableManifest{Name: "channels"}, Mode: snapshot.TableImportReplace},
+			{Table: snapshot.TableManifest{Name: "messages"}, Mode: snapshot.TableImportFiles},
+		},
+	})
+	require.True(t, rebuildMessages)
+	require.False(t, rebuildMembers)
 }
 
 func TestPreviousImportedManifestFallsBackToGitHistory(t *testing.T) {
@@ -871,7 +883,7 @@ func TestImportIfChangedUsesIncrementalTailImport(t *testing.T) {
 	require.True(t, changed)
 	require.Equal(t, updated.GeneratedAt, imported.GeneratedAt)
 	require.Contains(t, progressPhases(progress), "table_start")
-	require.NotContains(t, progressPhases(progress), "rebuild_fts")
+	require.Contains(t, progressPhases(progress), "rebuild_fts")
 
 	results, err := dst.SearchMessages(ctx, store.SearchOptions{Query: "delta landed", Limit: 10})
 	require.NoError(t, err)
@@ -955,7 +967,7 @@ func TestImportIfChangedUsesMixedIncrementalPlanForMetadataChanges(t *testing.T)
 	require.True(t, supported, "%+v", planned)
 	require.Equal(t, snapshot.TableImportReplace, importPlanTable(t, planned, "channels").Mode)
 	require.Equal(t, snapshot.TableImportReplace, importPlanTable(t, planned, "members").Mode)
-	require.Equal(t, snapshot.TableImportFiles, importPlanTable(t, planned, "messages").Mode)
+	require.Equal(t, snapshot.TableImportReplace, importPlanTable(t, planned, "messages").Mode)
 	require.Equal(t, snapshot.TableImportReplace, importPlanTable(t, planned, "message_events").Mode)
 	require.Equal(t, snapshot.TableImportReplace, importPlanTable(t, planned, "message_attachments").Mode)
 	require.Equal(t, snapshot.TableImportReplace, importPlanTable(t, planned, "mention_events").Mode)
@@ -1054,7 +1066,7 @@ func TestImportIfChangedInfersLegacyManifestFilesFromGit(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.True(t, changed)
-	require.NotContains(t, progressPhases(progress), "rebuild_fts")
+	require.Contains(t, progressPhases(progress), "rebuild_fts")
 	results, err := dst.SearchMessages(ctx, store.SearchOptions{Query: "legacy git delta", Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, results, 1)

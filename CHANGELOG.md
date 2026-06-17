@@ -6,6 +6,8 @@
 
 ### Fixes
 
+- Keep incremental share imports compatible with crawlkit's safe changed-tail replacement plan instead of falling back to a full archive rebuild.
+
 ## 0.11.0 - 2026-06-11
 
 ### Changes

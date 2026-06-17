@@ -529,6 +529,10 @@ func importPlanSearchRebuilds(plan snapshot.ImportPlan) (bool, bool) {
 		switch tablePlan.Table.Name {
 		case "channels":
 			rebuildMessageFTS = true
+		case "messages":
+			if tablePlan.Mode == snapshot.TableImportReplace {
+				rebuildMessageFTS = true
+			}
 		case "members":
 			rebuildMemberFTS = true
 		}
@@ -738,7 +742,7 @@ func shareIncrementalPlan(plan snapshot.ImportPlan) (snapshot.ImportPlan, bool) 
 			}
 		case snapshot.TableImportReplace:
 			switch tablePlan.Table.Name {
-			case "guilds", "channels", "members", "message_events", "message_attachments", "mention_events", "sync_state":
+			case "guilds", "channels", "members", "messages", "message_events", "message_attachments", "mention_events", "sync_state":
 				out.Tables = append(out.Tables, tablePlan)
 			default:
 				return plan, false
