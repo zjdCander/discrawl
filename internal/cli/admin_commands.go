@@ -119,6 +119,7 @@ func (r *runtime) runSync(args []string) error {
 	withEmbeddings := fs.Bool("with-embeddings", false, "")
 	withMedia := fs.Bool("with-media", r.cfg.AttachmentMediaEnabled(), "")
 	skipMembers := fs.Bool("skip-members", false, "")
+	withMembers := fs.Bool("with-members", false, "")
 	latestOnly := fs.Bool("latest-only", false, "")
 	guildsFlag := fs.String("guilds", "", "")
 	guildFlag := fs.String("guild", "", "")
@@ -129,6 +130,9 @@ func (r *runtime) runSync(args []string) error {
 	}
 	if *noUpdate && strings.TrimSpace(*updateMode) != "" && !strings.EqualFold(strings.TrimSpace(*updateMode), string(shareUpdateNever)) {
 		return usageErr(errors.New("use either --no-update or --update, not both"))
+	}
+	if *skipMembers && *withMembers {
+		return usageErr(errors.New("use either --skip-members or --with-members, not both"))
 	}
 	if strings.TrimSpace(*updateMode) != "" {
 		if _, err := parseShareUpdateMode(*updateMode); err != nil {
@@ -153,14 +157,15 @@ func (r *runtime) runSync(args []string) error {
 	}
 	defaultLatest := defaultLatestSyncMode(*full, *allChannels, *since, *channels)
 	opts := syncer.SyncOptions{
-		Full:        *full,
-		GuildIDs:    guildIDs,
-		ChannelIDs:  csvList(*channels),
-		Concurrency: *concurrency,
-		Since:       sinceTime,
-		Embeddings:  *withEmbeddings,
-		SkipMembers: syncSkipsMembers(*skipMembers, defaultLatest),
-		LatestOnly:  syncLatestOnly(*latestOnly, defaultLatest),
+		Full:           *full,
+		GuildIDs:       guildIDs,
+		ChannelIDs:     csvList(*channels),
+		Concurrency:    *concurrency,
+		Since:          sinceTime,
+		Embeddings:     *withEmbeddings,
+		SkipMembers:    syncSkipsMembers(*skipMembers, *withMembers, defaultLatest),
+		RequireMembers: *withMembers,
+		LatestOnly:     syncLatestOnly(*latestOnly, defaultLatest),
 	}
 	return r.withSyncLock(func() error {
 		return r.runSyncLocked(sources, opts, *withMedia)
@@ -283,8 +288,8 @@ func syncLatestOnly(explicit bool, defaultLatest bool) bool {
 	return explicit || defaultLatest
 }
 
-func syncSkipsMembers(explicit bool, defaultLatest bool) bool {
-	return explicit || defaultLatest
+func syncSkipsMembers(skipMembers bool, withMembers bool, defaultLatest bool) bool {
+	return skipMembers || (!withMembers && defaultLatest)
 }
 
 func parseSyncSources(raw string) (syncSources, error) {
