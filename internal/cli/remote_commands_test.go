@@ -3,7 +3,9 @@ package cli
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -376,35 +378,42 @@ func TestPollRemoteLoginStates(t *testing.T) {
 	}
 }
 
-func TestSendIngestRowsBatchesAndFinalizes(t *testing.T) {
+func TestPublishIngestRowsStreamsBatchesAndFinalizes(t *testing.T) {
 	var requests []crawlremote.IngestRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body crawlremote.IngestRequest
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		requests = append(requests, body)
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(crawlremote.IngestResult{RowsAccepted: int64(len(body.Rows)), Complete: body.Final})
-	}))
-	defer server.Close()
+	ingest := func(_ context.Context, _ string, _ string, req crawlremote.IngestRequest) (crawlremote.IngestResult, error) {
+		requests = append(requests, req)
+		return crawlremote.IngestResult{RowsAccepted: int64(len(req.Rows)), Complete: req.Final}, nil
+	}
 
-	client, err := crawlremote.NewClientFromConfig(crawlremote.Config{Endpoint: server.URL}, crawlremote.Options{
-		TokenProvider: crawlremote.StaticToken("publish-token"),
-	})
+	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
-		t.Fatalf("client: %v", err)
+		t.Fatalf("open sqlite: %v", err)
 	}
-	rows := make([][]any, discrawlCloudBatchSize+1)
-	for i := range rows {
-		rows[i] = []any{i}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(context.Background(), `create table export_rows(id integer primary key, body blob)`); err != nil {
+		t.Fatalf("create table: %v", err)
 	}
-	accepted, err := sendIngestRows(context.Background(), client, "discrawl/openclaw", crawlremote.IngestManifest{App: "discrawl"}, "messages", []string{"id"}, rows, true)
+	for i := range discrawlCloudBatchSize + 1 {
+		if _, err := db.ExecContext(context.Background(), `insert into export_rows(id, body) values(?, ?)`, i, []byte(fmt.Sprintf("row-%03d", i))); err != nil {
+			t.Fatalf("insert row: %v", err)
+		}
+	}
+
+	accepted, err := publishIngestRows(
+		context.Background(),
+		db,
+		`select id, body from export_rows order by id`,
+		ingest,
+		"discrawl/openclaw",
+		crawlremote.IngestManifest{App: "discrawl"},
+		"messages",
+		[]string{"id", "body"},
+		true,
+	)
 	if err != nil {
-		t.Fatalf("send ingest: %v", err)
+		t.Fatalf("publish ingest: %v", err)
 	}
-	if accepted != int64(len(rows)) || len(requests) != 2 {
+	if accepted != int64(discrawlCloudBatchSize+1) || len(requests) != 2 {
 		t.Fatalf("accepted=%d requests=%d", accepted, len(requests))
 	}
 	if requests[0].Cursor != "" || requests[0].Final || len(requests[0].Rows) != discrawlCloudBatchSize {
@@ -412,5 +421,8 @@ func TestSendIngestRowsBatchesAndFinalizes(t *testing.T) {
 	}
 	if requests[1].Cursor != "250" || !requests[1].Final || len(requests[1].Rows) != 1 {
 		t.Fatalf("second request = %#v", requests[1])
+	}
+	if requests[0].Rows[0][1] != "row-000" {
+		t.Fatalf("blob row was not converted to string: %#v", requests[0].Rows[0])
 	}
 }

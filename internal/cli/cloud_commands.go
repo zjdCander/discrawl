@@ -93,35 +93,20 @@ func (r *runtime) runCloudPublish(args []string) error {
 			return dbErr(err)
 		}
 		if !*sqliteOnly {
-			guilds, err := publishRows(r.ctx, r.store.DB(), discrawlGuildExportSQL)
-			if err != nil {
-				return dbErr(err)
-			}
-			channels, err := publishRows(r.ctx, r.store.DB(), discrawlChannelExportSQL)
-			if err != nil {
-				return dbErr(err)
-			}
-			messages, err := publishRows(r.ctx, r.store.DB(), discrawlMessageExportSQL)
-			if err != nil {
-				return dbErr(err)
-			}
-			members, err := publishRows(r.ctx, r.store.DB(), discrawlMemberExportSQL)
-			if err != nil {
-				return dbErr(err)
-			}
-			guildCount, err = sendIngestRows(r.ctx, client, archiveID, manifest, "guilds", discrawlGuildColumns, guilds, false)
+			ingest := client.Ingest
+			guildCount, err = publishIngestRows(r.ctx, r.store.DB(), discrawlGuildExportSQL, ingest, archiveID, manifest, "guilds", discrawlGuildColumns, false)
 			if err != nil {
 				return err
 			}
-			channelCount, err = sendIngestRows(r.ctx, client, archiveID, manifest, "channels", discrawlChannelColumns, channels, false)
+			channelCount, err = publishIngestRows(r.ctx, r.store.DB(), discrawlChannelExportSQL, ingest, archiveID, manifest, "channels", discrawlChannelColumns, false)
 			if err != nil {
 				return err
 			}
-			memberCount, err = sendIngestRows(r.ctx, client, archiveID, manifest, "members", discrawlMemberColumns, members, false)
+			memberCount, err = publishIngestRows(r.ctx, r.store.DB(), discrawlMemberExportSQL, ingest, archiveID, manifest, "members", discrawlMemberColumns, false)
 			if err != nil {
 				return err
 			}
-			messageCount, err = sendIngestRows(r.ctx, client, archiveID, manifest, "messages", discrawlMessageColumns, messages, true)
+			messageCount, err = publishIngestRows(r.ctx, r.store.DB(), discrawlMessageExportSQL, ingest, archiveID, manifest, "messages", discrawlMessageColumns, true)
 			if err != nil {
 				return err
 			}
@@ -172,64 +157,66 @@ func countCloudRows(ctx context.Context, db *sql.DB, query string) (int64, error
 	return count, nil
 }
 
-func publishRows(ctx context.Context, db *sql.DB, query string) ([][]any, error) {
+type cloudIngestFunc func(context.Context, string, string, crawlremote.IngestRequest) (crawlremote.IngestResult, error)
+
+func publishIngestRows(ctx context.Context, db *sql.DB, query string, ingest cloudIngestFunc, archive string, manifest crawlremote.IngestManifest, table string, columns []string, final bool) (int64, error) {
 	rows, err := db.QueryContext(ctx, query)
 	if err != nil {
-		return nil, err
+		return 0, dbErr(err)
 	}
 	defer func() { _ = rows.Close() }()
 	cols, err := rows.Columns()
 	if err != nil {
-		return nil, err
+		return 0, dbErr(err)
 	}
-	out := make([][]any, 0)
+	var total int64
+	var sent int
+	batch := make([][]any, 0, discrawlCloudBatchSize)
+	flush := func(finalBatch bool) error {
+		result, err := ingest(ctx, "discrawl", archive, crawlremote.IngestRequest{
+			Manifest: manifest,
+			Table:    table,
+			Columns:  columns,
+			Rows:     batch,
+			Cursor:   cursorFor(sent),
+			Final:    final && finalBatch,
+		})
+		if err != nil {
+			return err
+		}
+		total += result.RowsAccepted
+		sent += len(batch)
+		batch = make([][]any, 0, discrawlCloudBatchSize)
+		return nil
+	}
 	for rows.Next() {
+		if len(batch) == discrawlCloudBatchSize {
+			if err := flush(false); err != nil {
+				return total, err
+			}
+		}
 		values := make([]any, len(cols))
 		ptrs := make([]any, len(cols))
 		for i := range values {
 			ptrs[i] = &values[i]
 		}
 		if err := rows.Scan(ptrs...); err != nil {
-			return nil, err
+			return total, dbErr(err)
 		}
 		for i, value := range values {
 			if bytes, ok := value.([]byte); ok {
 				values[i] = string(bytes)
 			}
 		}
-		out = append(out, values)
+		batch = append(batch, values)
 	}
-	return out, rows.Err()
-}
-
-func sendIngestRows(ctx context.Context, client *crawlremote.Client, archive string, manifest crawlremote.IngestManifest, table string, columns []string, rows [][]any, final bool) (int64, error) {
-	var total int64
-	if len(rows) == 0 {
-		result, err := client.Ingest(ctx, "discrawl", archive, crawlremote.IngestRequest{
-			Manifest: manifest,
-			Table:    table,
-			Columns:  columns,
-			Rows:     [][]any{},
-			Final:    final,
-		})
-		return result.RowsAccepted, err
+	if err := rows.Err(); err != nil {
+		return total, dbErr(err)
 	}
-	for start := 0; start < len(rows); start += discrawlCloudBatchSize {
-		end := min(start+discrawlCloudBatchSize, len(rows))
-		result, err := client.Ingest(ctx, "discrawl", archive, crawlremote.IngestRequest{
-			Manifest: manifest,
-			Table:    table,
-			Columns:  columns,
-			Rows:     rows[start:end],
-			Cursor:   cursorFor(start),
-			Final:    final && end == len(rows),
-		})
-		if err != nil {
-			return total, err
-		}
-		total += result.RowsAccepted
+	if len(batch) == 0 && sent == 0 {
+		return total, flush(true)
 	}
-	return total, nil
+	return total, flush(true)
 }
 
 func cursorFor(start int) string {
