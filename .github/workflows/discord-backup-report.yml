@@ -60,7 +60,12 @@ jobs:
             echo "::error title=Missing secret::Configure DISCORD_BACKUP_TOKEN with write access to the backup repository."
             exit 1
           fi
-          BACKUP_REMOTE="https://x-access-token:${DISCORD_BACKUP_TOKEN}@github.com/${DISCRAWL_BACKUP_REPOSITORY}.git"
+          GIT_CREDENTIALS="${RUNNER_TEMP}/discord-backup-git-credentials"
+          printf 'https://x-access-token:%s@github.com\n' "$DISCORD_BACKUP_TOKEN" > "$GIT_CREDENTIALS"
+          chmod 0600 "$GIT_CREDENTIALS"
+          git config --global credential.helper "store --file=${GIT_CREDENTIALS}"
+          trap 'rm -f "$GIT_CREDENTIALS"' EXIT
+          BACKUP_REMOTE="https://github.com/${DISCRAWL_BACKUP_REPOSITORY}.git"
           mkdir -p "$(dirname "$CONFIG")"
           mkdir -p "$(dirname "$DB")"
           git clone "$BACKUP_REMOTE" "$BACKUP_REPO"
