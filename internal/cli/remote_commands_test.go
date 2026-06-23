@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -419,10 +420,121 @@ func TestPublishIngestRowsStreamsBatchesAndFinalizes(t *testing.T) {
 	if requests[0].Cursor != "" || requests[0].Final || len(requests[0].Rows) != discrawlCloudBatchSize {
 		t.Fatalf("first request = %#v", requests[0])
 	}
-	if requests[1].Cursor != "250" || !requests[1].Final || len(requests[1].Rows) != 1 {
+	if requests[1].Cursor != fmt.Sprint(discrawlCloudBatchSize) || !requests[1].Final || len(requests[1].Rows) != 1 {
 		t.Fatalf("second request = %#v", requests[1])
 	}
 	if requests[0].Rows[0][1] != "row-000" {
 		t.Fatalf("blob row was not converted to string: %#v", requests[0].Rows[0])
+	}
+}
+
+func TestPublishIngestRowsSplitsMemoryRejectedBatches(t *testing.T) {
+	var requests []crawlremote.IngestRequest
+	ingest := func(_ context.Context, _ string, _ string, req crawlremote.IngestRequest) (crawlremote.IngestResult, error) {
+		if len(req.Rows) > 100 {
+			return crawlremote.IngestResult{}, errors.New("remote request failed: status=500 code=internal_error message=D1_ERROR: out of memory: SQLITE_NOMEM")
+		}
+		requests = append(requests, req)
+		return crawlremote.IngestResult{RowsAccepted: int64(len(req.Rows))}, nil
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(context.Background(), `create table export_rows(id integer primary key, body text)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	for i := range discrawlCloudBatchSize {
+		if _, err := db.ExecContext(context.Background(), `insert into export_rows(id, body) values(?, ?)`, i, fmt.Sprintf("row-%03d", i)); err != nil {
+			t.Fatalf("insert row: %v", err)
+		}
+	}
+
+	accepted, err := publishIngestRows(
+		context.Background(),
+		db,
+		`select id, body from export_rows order by id`,
+		ingest,
+		"discrawl/openclaw",
+		crawlremote.IngestManifest{App: "discrawl"},
+		"messages",
+		[]string{"id", "body"},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("publish ingest: %v", err)
+	}
+	if accepted != int64(discrawlCloudBatchSize) {
+		t.Fatalf("accepted=%d", accepted)
+	}
+	if len(requests) != 4 {
+		t.Fatalf("requests=%d", len(requests))
+	}
+	for i, request := range requests {
+		if len(request.Rows) > 100 {
+			t.Fatalf("request %d was not split: %d rows", i, len(request.Rows))
+		}
+		if request.Final != (i == len(requests)-1) {
+			t.Fatalf("request %d final=%v", i, request.Final)
+		}
+	}
+	if requests[0].Cursor != "" || requests[1].Cursor == "" {
+		t.Fatalf("split cursors were not preserved: %#v", requests)
+	}
+}
+
+func TestPublishIngestRowsDrainsRemoteResetBeforeRetry(t *testing.T) {
+	var requests []crawlremote.IngestRequest
+	resetCalls := 0
+	rejectedFirstBatch := false
+	ingest := func(_ context.Context, _ string, _ string, req crawlremote.IngestRequest) (crawlremote.IngestResult, error) {
+		if len(req.Rows) == 0 {
+			resetCalls++
+			return crawlremote.IngestResult{ResetIncomplete: resetCalls == 1, ResetDeleted: 10000}, nil
+		}
+		if req.Cursor == "" && !rejectedFirstBatch {
+			rejectedFirstBatch = true
+			return crawlremote.IngestResult{}, &crawlremote.Error{Status: 409, Code: "reset_incomplete", Message: "archive table reset is still in progress"}
+		}
+		requests = append(requests, req)
+		return crawlremote.IngestResult{RowsAccepted: int64(len(req.Rows))}, nil
+	}
+
+	db, err := sql.Open("sqlite", ":memory:")
+	if err != nil {
+		t.Fatalf("open sqlite: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+	if _, err := db.ExecContext(context.Background(), `create table export_rows(id integer primary key, body text)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `insert into export_rows(id, body) values(1, 'row-001')`); err != nil {
+		t.Fatalf("insert row: %v", err)
+	}
+
+	accepted, err := publishIngestRows(
+		context.Background(),
+		db,
+		`select id, body from export_rows order by id`,
+		ingest,
+		"discrawl/openclaw",
+		crawlremote.IngestManifest{App: "discrawl"},
+		"messages",
+		[]string{"id", "body"},
+		true,
+	)
+	if err != nil {
+		t.Fatalf("publish ingest: %v", err)
+	}
+	if accepted != 1 {
+		t.Fatalf("accepted=%d", accepted)
+	}
+	if resetCalls != 2 {
+		t.Fatalf("resetCalls=%d", resetCalls)
+	}
+	if len(requests) != 1 || requests[0].Cursor != "" || !requests[0].Final {
+		t.Fatalf("data requests = %#v", requests)
 	}
 }

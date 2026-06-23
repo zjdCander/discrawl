@@ -173,18 +173,11 @@ func publishIngestRows(ctx context.Context, db *sql.DB, query string, ingest clo
 	var sent int
 	batch := make([][]any, 0, discrawlCloudBatchSize)
 	flush := func(finalBatch bool) error {
-		result, err := ingest(ctx, "discrawl", archive, crawlremote.IngestRequest{
-			Manifest: manifest,
-			Table:    table,
-			Columns:  columns,
-			Rows:     batch,
-			Cursor:   cursorFor(sent),
-			Final:    final && finalBatch,
-		})
+		accepted, err := publishIngestBatch(ctx, ingest, archive, manifest, table, columns, batch, sent, final && finalBatch)
 		if err != nil {
 			return err
 		}
-		total += result.RowsAccepted
+		total += accepted
 		sent += len(batch)
 		batch = make([][]any, 0, discrawlCloudBatchSize)
 		return nil
@@ -217,6 +210,74 @@ func publishIngestRows(ctx context.Context, db *sql.DB, query string, ingest clo
 		return total, flush(true)
 	}
 	return total, flush(true)
+}
+
+func publishIngestBatch(ctx context.Context, ingest cloudIngestFunc, archive string, manifest crawlremote.IngestManifest, table string, columns []string, rows [][]any, cursor int, final bool) (int64, error) {
+	for {
+		result, err := ingest(ctx, "discrawl", archive, crawlremote.IngestRequest{
+			Manifest: manifest,
+			Table:    table,
+			Columns:  columns,
+			Rows:     rows,
+			Cursor:   cursorFor(cursor),
+			Final:    final,
+		})
+		if err == nil {
+			if result.ResetIncomplete {
+				if err := publishIngestReset(ctx, ingest, archive, manifest, table, columns); err != nil {
+					return 0, err
+				}
+				continue
+			}
+			return result.RowsAccepted, nil
+		}
+		if shouldDrainIngestReset(err) {
+			if err := publishIngestReset(ctx, ingest, archive, manifest, table, columns); err != nil {
+				return 0, err
+			}
+			continue
+		}
+		if len(rows) <= 1 || !shouldSplitIngestBatch(err) {
+			return 0, err
+		}
+		mid := len(rows) / 2
+		left, leftErr := publishIngestBatch(ctx, ingest, archive, manifest, table, columns, rows[:mid], cursor, false)
+		if leftErr != nil {
+			return 0, leftErr
+		}
+		right, rightErr := publishIngestBatch(ctx, ingest, archive, manifest, table, columns, rows[mid:], cursor+mid, final)
+		if rightErr != nil {
+			return 0, rightErr
+		}
+		return left + right, nil
+	}
+}
+
+func publishIngestReset(ctx context.Context, ingest cloudIngestFunc, archive string, manifest crawlremote.IngestManifest, table string, columns []string) error {
+	for {
+		result, err := ingest(ctx, "discrawl", archive, crawlremote.IngestRequest{
+			Manifest: manifest,
+			Table:    table,
+			Columns:  columns,
+			Rows:     [][]any{},
+		})
+		if err != nil {
+			return err
+		}
+		if !result.ResetIncomplete {
+			return nil
+		}
+	}
+}
+
+func shouldDrainIngestReset(err error) bool {
+	var remoteErr *crawlremote.Error
+	return errors.As(err, &remoteErr) && remoteErr.Code == "reset_incomplete"
+}
+
+func shouldSplitIngestBatch(err error) bool {
+	text := strings.ToLower(err.Error())
+	return strings.Contains(text, "sqlite_nomem") || strings.Contains(text, "out of memory")
 }
 
 func cursorFor(start int) string {

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.11.3 - 2026-06-23
+
+### Fixes
+
+- Drain large Cloudflare D1 table resets and split memory-bound ingest batches so `discrawl cloud publish` can refresh large Discord archives.
+
 ## 0.11.2 - 2026-06-23
 
 ### Fixes
