@@ -394,7 +394,7 @@ func TestPublishIngestRowsStreamsBatchesAndFinalizes(t *testing.T) {
 		t.Fatalf("create table: %v", err)
 	}
 	for i := range discrawlCloudBatchSize + 1 {
-		if _, err := db.ExecContext(context.Background(), `insert into export_rows(id, body) values(?, ?)`, i, []byte(fmt.Sprintf("row-%03d", i))); err != nil {
+		if _, err := db.ExecContext(context.Background(), `insert into export_rows(id, body) values(?, ?)`, i, fmt.Appendf(nil, "row-%03d", i)); err != nil {
 			t.Fatalf("insert row: %v", err)
 		}
 	}

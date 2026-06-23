@@ -1,6 +1,10 @@
 # Changelog
 
-## 0.11.2 - Unreleased
+## 0.11.2 - 2026-06-23
+
+### Fixes
+
+- Keep repeated Discord attachment snapshots from aborting scheduled archive syncs when the same attachment id appears again.
 
 ## 0.11.1 - 2026-06-19
 

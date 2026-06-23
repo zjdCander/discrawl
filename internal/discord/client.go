@@ -280,8 +280,8 @@ func (c *Client) Tail(ctx context.Context, handler EventHandler) error {
 	opened := false
 	defer func() {
 		cancel()
-		for i := len(removers) - 1; i >= 0; i-- {
-			removers[i]()
+		for _, remove := range slices.Backward(removers) {
+			remove()
 		}
 		if opened {
 			_ = c.session.Close()
