@@ -49,8 +49,7 @@ func ExitCode(err error) int {
 
 func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	if len(args) == 0 || rootHelpRequested(args, "config") {
-		printUsage(stdout)
-		return nil
+		return printUsage(stdout)
 	}
 	var global discrawlRootArgs
 	if err := parseKongArgs(&global, args, "discrawl", stdout, stderr); err != nil {
@@ -62,11 +61,13 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	}
 	rest := global.Args
 	if len(rest) == 0 || rest[0] == "--help" || rest[0] == "-h" || (rest[0] == "help" && len(rest) == 1) {
-		printUsage(stdout)
-		return nil
+		return printUsage(stdout)
 	}
 	if rest[0] == "help" {
 		return printCommandUsage(stdout, rest[1:])
+	}
+	if topic, ok := earlyCommandHelpTopic(rest); ok {
+		return printCommandUsage(stdout, topic)
 	}
 	if rest[0] == "version" {
 		_, _ = io.WriteString(stdout, version+"\n")
@@ -92,15 +93,117 @@ func Run(ctx context.Context, args []string, stdout, stderr io.Writer) error {
 	return runtime.dispatch(rest)
 }
 
+type discrawlGlobalArgs struct {
+	Config  string `help:"Config path."`
+	JSON    bool   `name:"json" help:"Write JSON output."`
+	Plain   bool   `help:"Write stable plain text output when available."`
+	Quiet   bool   `short:"q" help:"Only log errors."`
+	Verbose bool   `short:"v" help:"Enable debug logging."`
+	Version bool   `help:"Print version and exit."`
+	NoColor bool   `name:"no-color" help:"Disable color output."`
+}
+
 type discrawlRootArgs struct {
-	Config  string   `help:"Config path."`
-	JSON    bool     `name:"json" help:"Write JSON output."`
-	Plain   bool     `help:"Write stable plain text output when available."`
-	Quiet   bool     `short:"q" help:"Only log errors."`
-	Verbose bool     `short:"v" help:"Enable debug logging."`
-	Version bool     `help:"Print version and exit."`
-	NoColor bool     `name:"no-color" help:"Disable color output."`
-	Args    []string `arg:"" optional:"" passthrough:"partial" name:"command" help:"Command and arguments."`
+	discrawlGlobalArgs
+	Args []string `arg:"" optional:"" passthrough:"partial" name:"command" help:"Command and arguments."`
+}
+
+type discrawlHelpArgs struct {
+	discrawlGlobalArgs
+}
+
+type discrawlCommandSpec struct {
+	name        string
+	description string
+}
+
+var discrawlCommandSpecs = []discrawlCommandSpec{
+	{name: "metadata", description: "Print archive snapshot metadata."},
+	{name: "check-update", description: "Check GitHub Releases for a newer Discrawl build."},
+	{name: "version", description: "Print the Discrawl version."},
+	{name: "init", description: "Initialize Discrawl configuration."},
+	{name: "sync", description: "Sync Discord data into the local archive."},
+	{name: "tail", description: "Continuously archive new Discord messages."},
+	{name: "tap", description: "Import Discord Desktop cache data (wiretap alias)."},
+	{name: "cache-import", description: "Import Discord Desktop cache data (wiretap alias)."},
+	{name: "wiretap", description: "Import Discord Desktop cache data."},
+	{name: "search", description: "Search archived messages."},
+	{name: "tui", description: "Explore the archive in an interactive terminal UI."},
+	{name: "messages", description: "List archived messages."},
+	{name: "digest", description: "Summarize recent archive activity."},
+	{name: "analytics", description: "Analyze archive activity and trends."},
+	{name: "dms", description: "List local Discord Desktop conversations."},
+	{name: "mentions", description: "List archived mentions."},
+	{name: "attachments", description: "List or fetch archived attachments."},
+	{name: "embed", description: "Generate embeddings for archived messages."},
+	{name: "sql", description: "Run SQL queries against the local archive."},
+	{name: "members", description: "Inspect archived Discord members."},
+	{name: "channels", description: "Inspect and resolve archived channels."},
+	{name: "status", description: "Show archive status and freshness."},
+	{name: "diagnostics", description: "Report SQLite and sync-lock diagnostics."},
+	{name: "coverage", description: "Report archive coverage."},
+	{name: "failures", description: "List retained sync and import failures."},
+	{name: "remote", description: "Access a configured remote archive."},
+	{name: "whoami", description: "Show the configured remote identity."},
+	{name: "report", description: "Generate archive reports."},
+	{name: "publish", description: "Publish the configured archive snapshot."},
+	{name: "doctor", description: "Check Discrawl configuration and dependencies."},
+	{name: "cloud", description: "Manage a Cloudflare-backed remote archive."},
+	{name: "subscribe", description: "Configure a read-only snapshot subscription."},
+	{name: "subscribe-cloud", description: "Configure a read-only cloud archive."},
+	{name: "update", description: "Update the configured archive snapshot."},
+}
+
+func newDiscrawlHelpParser(stdout io.Writer) (*kong.Kong, error) {
+	var root discrawlHelpArgs
+	var command struct{}
+	options := []kong.Option{
+		kong.Name("discrawl"),
+		kong.Description("discrawl archives Discord guild data into local SQLite."),
+		kong.Writers(stdout, io.Discard),
+		kong.Exit(func(int) {}),
+		kong.ConfigureHelp(kong.HelpOptions{Compact: true, NoExpandSubcommands: true}),
+	}
+	for _, spec := range discrawlCommandSpecs {
+		options = append(options, kong.DynamicCommand(spec.name, spec.description, "", &command))
+	}
+	return kong.New(&root, options...)
+}
+
+func printKongUsage(stdout io.Writer) error {
+	parser, err := newDiscrawlHelpParser(stdout)
+	if err != nil {
+		return err
+	}
+	_, _ = parser.Parse([]string{"--help"})
+	return nil
+}
+
+func earlyCommandHelpTopic(rest []string) ([]string, bool) {
+	if len(rest) < 2 || rest[0] == "tui" || !hasHelpFlag(rest[1:]) {
+		return nil, false
+	}
+	if len(rest) >= 3 {
+		topic := canonicalHelpTopic(strings.Join(rest[:2], " "))
+		if _, ok := commandUsage[topic]; ok {
+			return strings.Fields(topic), true
+		}
+	}
+	topic := canonicalHelpTopic(rest[0])
+	if _, ok := commandUsage[topic]; !ok {
+		return nil, false
+	}
+	return []string{topic}, true
+}
+
+func canonicalHelpTopic(topic string) string {
+	if topic == "tap" || topic == "cache-import" {
+		return "wiretap"
+	}
+	if topic == "attachments fetch" {
+		return "attachments"
+	}
+	return topic
 }
 
 func rootHelpRequested(args []string, valueFlags ...string) bool {
