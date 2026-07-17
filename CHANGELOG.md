@@ -1,18 +1,32 @@
 # Changelog
 
-## 0.11.6 - Unreleased
+## 0.11.6 - 2026-07-17
+
+### Highlights
+
+- Keep live Discord tails recoverable across handler timeouts and process restarts with a private durable spool and exact create, update, and delete replay. Thanks @hannesrudolph.
+- Make CLI discovery and setup smoother with descriptive root and nested help, side-effect-free `-h`, and actionable missing-configuration guidance. Thanks @0xdevalias.
+- Harden archive boundaries by blocking attachment redirects off Discord CDN hosts and rejecting malformed tombstone timestamps before import mutations. Thanks @GrantTheAssistant.
+- Report accurate versions for source-installed binaries.
 
 ### Changes
 
+- Add bounded tail failure replay through `discrawl tail --replay-failures-only` and `--replay-limit`, with privacy-safe diagnostics. Thanks @hannesrudolph.
 - Improve root, command, and nested command help with descriptions and side-effect-free `-h` handling. Thanks @0xdevalias.
 
 ### Fixes
 
-- Show setup guidance instead of a raw missing-file error when configuration-dependent commands cannot find `config.toml`. Thanks @0xdevalias.
-- Report module build metadata for source-installed binaries instead of a stale hard-coded release version.
 - Keep Discord Gateway tails fail-closed while durably spooling and replaying timed-out message creates, updates, and deletes. Thanks @hannesrudolph.
 - Reject attachment redirects whose final URL leaves Discord's allowlisted CDN hosts. Thanks @GrantTheAssistant.
 - Reject malformed message tombstone timestamps before either SQLite snapshot import path mutates the archive. Thanks @GrantTheAssistant.
+- Show setup guidance instead of a raw missing-file error when configuration-dependent commands cannot find `config.toml`. Thanks @0xdevalias.
+- Report module build metadata for source-installed binaries instead of a stale hard-coded release version.
+
+### Maintenance
+
+- Update Crawlkit to v0.14.2 and Kong to v1.16.0, alongside current `x/sys`, `x/text`, and TruffleHog releases.
+- Harden GoReleaser macOS archive verification before signed publication.
+- Sync canonical AutoReview tooling and strengthen repository secret scanning. Thanks @vincentkoc.
 
 ## 0.11.5 - 2026-07-09
 
