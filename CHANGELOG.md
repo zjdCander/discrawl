@@ -1,6 +1,11 @@
 # Changelog
 
-## 0.11.8 - Unreleased
+## 0.11.8 - 2026-07-20
+
+### Highlights
+
+- Preserve member and guild history across syncs and Git-share merges with source-attributed tombstones, explicit restore semantics, and revision-aware reconciliation.
+- Keep large archives responsive and attachment retrieval secure with bounded coverage aggregation and strict Discord CDN redirect validation.
 
 ### Fixes
 
@@ -8,6 +13,10 @@
 - Preserve guild and member history with source-attributed tombstones, explicit restore semantics, omission-safe member refreshes, and revision-aware Git-share merges.
 - Keep attachment fetches compatible with three allowed Discord CDN redirects and injected HTTP transports while preserving final-response host validation.
 - Reject malformed tombstone timestamps before routine incremental snapshot imports mutate the archive.
+
+### Maintenance
+
+- Update `golang.org/x/crypto` to v0.54.0 and `modernc.org/libc` to v1.74.3, while confirming Crawlkit v0.14.3 remains current.
 
 ## 0.11.7 - 2026-07-17
 
